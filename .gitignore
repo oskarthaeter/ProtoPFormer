@@ -3,3 +3,4 @@ __pycache__/
 datasets/
 output_cosine/
 output_view/
+prototype_visualizations/

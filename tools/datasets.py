@@ -19,6 +19,7 @@ from torchvision.datasets.utils import download_url
 import matplotlib.pyplot as plt
 import scipy.io as sio
 from torchvision.datasets import VisionDataset
+
 # import torchvision.datasets as datasets
 # from torchvision.datasets.folder import default_loader
 # from torchvision.datasets.utils import download_url
@@ -26,15 +27,28 @@ from torchvision.datasets.utils import extract_archive, list_dir
 from scipy.io import loadmat
 from tools.preprocess import mean as mean_cub
 from tools.preprocess import std as std_cub
+
 # from tools.stanford_dogs import Dogs
 from typing import Callable, Optional, Any, Tuple
-from torchvision.datasets.utils import download_and_extract_archive, download_url, verify_str_arg
+from torchvision.datasets.utils import (
+    download_and_extract_archive,
+    download_url,
+    verify_str_arg,
+)
 import pathlib
 
 
 class INatDataset(ImageFolder):
-    def __init__(self, root, train=True, year=2018, transform=None, target_transform=None,
-                 category='name', loader=default_loader):
+    def __init__(
+        self,
+        root,
+        train=True,
+        year=2018,
+        transform=None,
+        target_transform=None,
+        category="name",
+        loader=default_loader,
+    ):
         self.transform = transform
         self.loader = loader
         self.target_transform = target_transform
@@ -44,7 +58,7 @@ class INatDataset(ImageFolder):
         with open(path_json) as json_file:
             data = json.load(json_file)
 
-        with open(os.path.join(root, 'categories.json')) as json_file:
+        with open(os.path.join(root, "categories.json")) as json_file:
             data_catg = json.load(json_file)
 
         path_json_for_targeter = os.path.join(root, f"train{year}.json")
@@ -54,17 +68,17 @@ class INatDataset(ImageFolder):
 
         targeter = {}
         indexer = 0
-        for elem in data_for_targeter['annotations']:
+        for elem in data_for_targeter["annotations"]:
             king = []
-            king.append(data_catg[int(elem['category_id'])][category])
+            king.append(data_catg[int(elem["category_id"])][category])
             if king[0] not in targeter.keys():
                 targeter[king[0]] = indexer
                 indexer += 1
         self.nb_classes = len(targeter)
 
         self.samples = []
-        for elem in data['images']:
-            cut = elem['file_name'].split('/')
+        for elem in data["images"]:
+            cut = elem["file_name"].split("/")
             target_current = int(cut[2])
             path_current = os.path.join(root, cut[0], cut[2], cut[3])
 
@@ -74,46 +88,54 @@ class INatDataset(ImageFolder):
 
     # __getitem__ and __len__ inherited from ImageFolder
 
+
 def build_dataset_view(is_train, args):
     large_size = int((256 / 224) * args.input_size)
-    if 'adam' in args.model[0]:
-        transform = transforms.Compose([
-            transforms.Resize(size=(args.input_size, args.input_size)),
-            transforms.ToTensor(),
-        ])
+    if "adam" in args.model[0]:
+        transform = transforms.Compose(
+            [
+                transforms.Resize(size=(args.input_size, args.input_size)),
+                transforms.ToTensor(),
+            ]
+        )
     else:
-        transform = transforms.Compose([
-            transforms.Resize(size=large_size, interpolation=3),
-            transforms.CenterCrop(args.input_size),
-            transforms.ToTensor(),
-        ])
+        transform = transforms.Compose(
+            [
+                transforms.Resize(size=large_size, interpolation=3),
+                transforms.CenterCrop(args.input_size),
+                transforms.ToTensor(),
+            ]
+        )
 
-    if args.data_set == 'CIFAR100':
+    if args.data_set == "CIFAR100":
         dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)
         nb_classes = 100
-    elif args.data_set == 'CIFAR10':
+    elif args.data_set == "CIFAR10":
         dataset = datasets.CIFAR10(args.data_path, train=is_train, transform=transform)
         nb_classes = 10
-    elif args.data_set == 'CUB2011U':
+    elif args.data_set == "CUB2011U":
         dataset = Cub2011(args.data_path, train=is_train, transform=transform)
         nb_classes = 200
-    elif args.data_set == 'Dogs':
-        dataset = Dogs(root=os.path.join(args.data_path, 'stanford_dogs'), train=is_train, cropped=False,
-                    transform=transform, download=False)
+    elif args.data_set == "Dogs":
+        dataset = Dogs(
+            root=os.path.join(args.data_path, "stanford_dogs"),
+            train=is_train,
+            cropped=False,
+            transform=transform,
+            download=False,
+        )
         nb_classes = 120
-    elif args.data_set == 'CUB2011':
+    elif args.data_set == "CUB2011":
         if is_train:
-            dataset = datasets.ImageFolder(
-                args.train_dir,
-                transform=transform)
+            dataset = datasets.ImageFolder(args.train_dir, transform=transform)
         else:
-            dataset = datasets.ImageFolder(
-                args.test_dir,
-                transform=transform)
+            dataset = datasets.ImageFolder(args.test_dir, transform=transform)
         nb_classes = 200
-    elif args.data_set == 'Car':
-        split = 'train' if is_train else 'test'
-        dataset = StanfordCars(args.data_path, split=split, transform=transform, download=True)
+    elif args.data_set == "Car":
+        split = "train" if is_train else "test"
+        dataset = StanfordCars(
+            args.data_path, split=split, transform=transform, download=True
+        )
         nb_classes = 196
 
     return dataset, nb_classes
@@ -123,42 +145,45 @@ def build_dataset_noaug(is_train, args):
     large_size = int((256 / 224) * args.input_size)
     transform = []
     # transform.append(transforms.ToTensor())
-    if 'adam' in args.model[0]:
+    if "adam" in args.model[0]:
         transform.append(transforms.Resize(size=(args.input_size, args.input_size)))
     else:
         transform.append(transforms.Resize(large_size, interpolation=3))
         transform.append(transforms.CenterCrop(args.input_size))
-    
+
     transform.append(transforms.ToTensor())
     transform.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
     transform = transforms.Compose(transform)
 
-    if args.data_set == 'CIFAR100':
+    if args.data_set == "CIFAR100":
         dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)
         nb_classes = 100
-    elif args.data_set == 'CIFAR10':
+    elif args.data_set == "CIFAR10":
         dataset = datasets.CIFAR10(args.data_path, train=is_train, transform=transform)
         nb_classes = 10
-    elif args.data_set == 'CUB2011U':
+    elif args.data_set == "CUB2011U":
         dataset = Cub2011(args.data_path, train=is_train, transform=transform)
         nb_classes = 200
-    elif args.data_set == 'Dogs':
-        dataset = Dogs(root=os.path.join(args.data_path, 'stanford_dogs'), train=is_train, cropped=False,
-                    transform=transform, download=False)
+    elif args.data_set == "Dogs":
+        dataset = Dogs(
+            root=os.path.join(args.data_path, "stanford_dogs"),
+            train=is_train,
+            cropped=False,
+            transform=transform,
+            download=False,
+        )
         nb_classes = 120
-    elif args.data_set == 'CUB2011':
+    elif args.data_set == "CUB2011":
         if is_train:
-            dataset = datasets.ImageFolder(
-                args.train_dir,
-                transform=transform)
+            dataset = datasets.ImageFolder(args.train_dir, transform=transform)
         else:
-            dataset = datasets.ImageFolder(
-                args.test_dir,
-                transform=transform)
+            dataset = datasets.ImageFolder(args.test_dir, transform=transform)
         nb_classes = 200
-    elif args.data_set == 'Car':
-        split = 'train' if is_train else 'test'
-        dataset = StanfordCars(args.data_path, split=split, transform=transform, download=True)
+    elif args.data_set == "Car":
+        split = "train" if is_train else "test"
+        dataset = StanfordCars(
+            args.data_path, split=split, transform=transform, download=True
+        )
         nb_classes = 196
 
     return dataset, nb_classes
@@ -167,107 +192,141 @@ def build_dataset_noaug(is_train, args):
 def build_dataset(is_train, args):
     transform = build_transform(is_train, args)
 
-    if args.data_set == 'CIFAR100':
+    if args.data_set == "CIFAR100":
         dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)
         nb_classes = 100
-    elif args.data_set == 'CIFAR10':
+    elif args.data_set == "CIFAR10":
         dataset = datasets.CIFAR10(args.data_path, train=is_train, transform=transform)
         nb_classes = 10
-    elif args.data_set == 'FashionMNIST':
-        dataset = datasets.FashionMNIST(args.data_path, train=is_train, transform=transform, download=True)
+    elif args.data_set == "FashionMNIST":
+        dataset = datasets.FashionMNIST(
+            args.data_path, train=is_train, transform=transform, download=True
+        )
         nb_classes = 10
-    elif args.data_set == 'MNIST':
-        dataset = datasets.MNIST(args.data_path, train=is_train, transform=transform, download=True)
+    elif args.data_set == "MNIST":
+        dataset = datasets.MNIST(
+            args.data_path, train=is_train, transform=transform, download=True
+        )
         nb_classes = 10
-    elif args.data_set == 'CUB2011U':
-        dataset = Cub2011(args.data_path, train=is_train, transform=transform)
+    elif args.data_set == "CUB2011U":
+        dataset = Cub2011(
+            args.data_path, train=is_train, transform=transform, download=True
+        )
         nb_classes = 200
-    elif args.data_set == 'Car':
-        split = 'train' if is_train else 'test'
-        dataset = StanfordCars(args.data_path, split=split, transform=transform, download=True)
+    elif args.data_set == "Car":
+        split = "train" if is_train else "test"
+        dataset = StanfordCars(
+            args.data_path, split=split, transform=transform, download=True
+        )
         nb_classes = 196
     # elif args.data_set == 'Car':
     #     dataset = Cars(os.path.join(args.data_path, 'stanford-car'), train=is_train,
     #                    transform=transform, download=True)
     #     nb_classes = 196
-    elif args.data_set == 'Dogs':
-        dataset = Dogs(root=os.path.join(args.data_path, 'stanford_dogs'), train=is_train, cropped=False,
-                    transform=transform, download=False)
+    elif args.data_set == "Dogs":
+        dataset = Dogs(
+            root=os.path.join(args.data_path, "stanford_dogs"),
+            train=is_train,
+            cropped=False,
+            transform=transform,
+            download=False,
+        )
         nb_classes = 120
-    elif args.data_set == 'Caltech256':
+    elif args.data_set == "Caltech256":
         dataset = datasets.Caltech256(args.data_path, transform=transform)
         nb_classes = 256
-    elif args.data_set == 'CUB2011':
-        normalize = transforms.Normalize(mean=mean_cub,
-                                    std=std_cub)
+    elif args.data_set == "CUB2011":
+        normalize = transforms.Normalize(mean=mean_cub, std=std_cub)
         if is_train:
             dataset = datasets.ImageFolder(
                 args.train_dir,
-                transforms.Compose([
-                    transforms.Resize(size=(args.img_size, args.img_size)),
-                    transforms.ToTensor(),
-                    normalize,
-                ]))
+                transforms.Compose(
+                    [
+                        transforms.Resize(size=(args.img_size, args.img_size)),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]
+                ),
+            )
         else:
             dataset = datasets.ImageFolder(
                 args.test_dir,
-                transforms.Compose([
-                    transforms.Resize(size=(args.img_size, args.img_size)),
-                    transforms.ToTensor(),
-                    normalize,
-                ]))
+                transforms.Compose(
+                    [
+                        transforms.Resize(size=(args.img_size, args.img_size)),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]
+                ),
+            )
         nb_classes = 200
-    elif args.data_set == 'Flowers':
+    elif args.data_set == "Flowers":
         if is_train:
-            data_root = os.path.join(args.data_path, 'Oxford_flower/flowers/train')
+            data_root = os.path.join(args.data_path, "Oxford_flower/flowers/train")
         else:
-            data_root = os.path.join(args.data_path, 'Oxford_flower/flowers/test')
+            data_root = os.path.join(args.data_path, "Oxford_flower/flowers/test")
         dataset = datasets.ImageFolder(root=data_root, transform=transform)
         nb_classes = 102
-    elif args.data_set == 'FGVC':
-        dataset = Aircraft(root=args.data_path, train=is_train,
-                       transform=transform, download=False)
+    elif args.data_set == "FGVC":
+        dataset = Aircraft(
+            root=args.data_path, train=is_train, transform=transform, download=False
+        )
         nb_classes = 100
-    elif args.data_set == 'WikiArt':
-        root = os.path.join(args.data_path, 'wikiart', 'train' if is_train else 'test')
+    elif args.data_set == "WikiArt":
+        root = os.path.join(args.data_path, "wikiart", "train" if is_train else "test")
         dataset = ImageFolder(root=root, transform=transform)
         nb_classes = 195
-    elif args.data_set == 'Sketches':
-        root = os.path.join(args.data_path, 'sketches', 'train' if is_train else 'test')
+    elif args.data_set == "Sketches":
+        root = os.path.join(args.data_path, "sketches", "train" if is_train else "test")
         dataset = ImageFolder(root=root, transform=transform)
         nb_classes = 250
-    elif args.data_set == 'Places365':
-        root = os.path.join(args.data_path, 'places365_standard', 'train' if is_train else 'val')
+    elif args.data_set == "Places365":
+        root = os.path.join(
+            args.data_path, "places365_standard", "train" if is_train else "val"
+        )
         dataset = ImageFolder(root=root, transform=transform)
         nb_classes = 365
 
-
-    elif args.data_set == 'IMNET':
-        root = os.path.join(args.data_path, 'train' if is_train else 'val')
+    elif args.data_set == "IMNET":
+        root = os.path.join(args.data_path, "train" if is_train else "val")
         dataset = datasets.ImageFolder(root, transform=transform)
         nb_classes = 1000
-    elif args.data_set == 'IMNET12':
-        if os.path.isdir(os.path.join(args.data_path, 'ILSVRC2012', 'train')):
-        # root = os.path.join(args.data_path, 'ILSVRC2012', 'train_set' if is_train else 'val_set')
-            root = os.path.join(args.data_path, 'ILSVRC2012', 'train' if is_train else 'val')
-        elif os.path.isdir(os.path.join(args.data_path, 'ILSVRC2012', 'train_set')):
-            root = os.path.join(args.data_path, 'ILSVRC2012', 'train_set' if is_train else 'val_set')
+    elif args.data_set == "IMNET12":
+        if os.path.isdir(os.path.join(args.data_path, "ILSVRC2012", "train")):
+            # root = os.path.join(args.data_path, 'ILSVRC2012', 'train_set' if is_train else 'val_set')
+            root = os.path.join(
+                args.data_path, "ILSVRC2012", "train" if is_train else "val"
+            )
+        elif os.path.isdir(os.path.join(args.data_path, "ILSVRC2012", "train_set")):
+            root = os.path.join(
+                args.data_path, "ILSVRC2012", "train_set" if is_train else "val_set"
+            )
         dataset = datasets.ImageFolder(root, transform=transform)
         nb_classes = 1000
 
-    elif args.data_set == 'INAT':
-        dataset = INatDataset(args.data_path, train=is_train, year=2018,
-                              category=args.inat_category, transform=transform)
+    elif args.data_set == "INAT":
+        dataset = INatDataset(
+            args.data_path,
+            train=is_train,
+            year=2018,
+            category=args.inat_category,
+            transform=transform,
+        )
         nb_classes = dataset.nb_classes
-    elif args.data_set == 'INAT19':
-        dataset = INatDataset(args.data_path, train=is_train, year=2019,
-                              category=args.inat_category, transform=transform)
+    elif args.data_set == "INAT19":
+        dataset = INatDataset(
+            args.data_path,
+            train=is_train,
+            year=2019,
+            category=args.inat_category,
+            transform=transform,
+        )
         nb_classes = dataset.nb_classes
-    elif args.data_set == 'CIFAR32':
+    elif args.data_set == "CIFAR32":
         dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)
         nb_classes = 100
 
-    elif args.data_set == 'CIFAR100_CNN':
+    elif args.data_set == "CIFAR100_CNN":
         dataset = get_cifar_100_224(
             root=args.data_path,
             split=is_train,
@@ -281,7 +340,7 @@ def build_transform(is_train, args):
     resize_im = args.input_size > 32
     if is_train:
         # this should always dispatch to transforms_imagenet_train
-        if args.data_set in ['FashionMNIST', 'MNIST']:
+        if args.data_set in ["FashionMNIST", "MNIST"]:
             # channel == 1
             transform = create_transform(
                 input_size=args.input_size,
@@ -309,26 +368,27 @@ def build_transform(is_train, args):
         if not resize_im and args.input_size == 32:
             # replace RandomResizedCropAndInterpolation with
             # RandomCrop
-            transform.transforms[0] = transforms.RandomCrop(
-                args.input_size, padding=4)
+            transform.transforms[0] = transforms.RandomCrop(args.input_size, padding=4)
         # elif not resize_im and args.input_size == 28:
         #     # replace RandomResizedCropAndInterpolation with
         #     # RandomCrop
         #     transform.transforms[0] = transforms.RandomCrop(
         #         args.input_size, padding=4)
-                
+
         return transform
 
     t = []
     if resize_im:
         size = int((256 / 224) * args.input_size)
         t.append(
-            transforms.Resize(size, interpolation=3),  # to maintain same ratio w.r.t. 224 images
+            transforms.Resize(
+                size, interpolation=3
+            ),  # to maintain same ratio w.r.t. 224 images
         )
         t.append(transforms.CenterCrop(args.input_size))
 
     t.append(transforms.ToTensor())
-    if args.data_set in ['FashionMNIST', 'MNIST']:
+    if args.data_set in ["FashionMNIST", "MNIST"]:
         t.append(transforms.Normalize((0.485,), (0.229,)))
     else:
         t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
@@ -337,18 +397,22 @@ def build_transform(is_train, args):
 
 def get_cifar_100_224(root: str, split: str = "train") -> Dataset:
     normalize = transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
-    train_transform = transforms.Compose([
-        transforms.Resize(224),
-        transforms.RandomCrop(224, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize,
-    ])
-    test_transform = transforms.Compose([
-        transforms.Resize(224),
-        transforms.ToTensor(),
-        normalize,
-    ])
+    train_transform = transforms.Compose(
+        [
+            transforms.Resize(224),
+            transforms.RandomCrop(224, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
+    test_transform = transforms.Compose(
+        [
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
     if split == "train":
         transform = train_transform
         is_train = True
@@ -362,7 +426,7 @@ def get_cifar_100_224(root: str, split: str = "train") -> Dataset:
         train=is_train,
         transform=transform,
         target_transform=target_transform,
-        download=True
+        download=True,
     )
 
     return dataset
@@ -370,16 +434,20 @@ def get_cifar_100_224(root: str, split: str = "train") -> Dataset:
 
 def get_cifar_100(root: str, split: str = "train") -> Dataset:
     normalize = transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
-    train_transform = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize,
-    ])
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        normalize,
-    ])
+    train_transform = transforms.Compose(
+        [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
+    test_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
     if split == "train":
         transform = train_transform
         is_train = True
@@ -393,19 +461,21 @@ def get_cifar_100(root: str, split: str = "train") -> Dataset:
         train=is_train,
         transform=transform,
         target_transform=target_transform,
-        download=True
+        download=True,
     )
 
     return dataset
 
 
 class Cub2011(Dataset):
-    base_folder = 'CUB_200_2011/images'
-    url = 'http://www.vision.caltech.edu/visipedia-data/CUB-200-2011/CUB_200_2011.tgz'
-    filename = 'CUB_200_2011.tgz'
-    tgz_md5 = '97eceeb196236b17998738112f37df78'
+    base_folder = "CUB_200_2011/images"
+    url = "https://data.caltech.edu/records/65de6-vp158/files/CUB_200_2011.tgz"
+    filename = "CUB_200_2011.tgz"
+    tgz_md5 = "97eceeb196236b17998738112f37df78"
 
-    def __init__(self, root, train=True, transform=None, loader=default_loader, download=False):
+    def __init__(
+        self, root, train=True, transform=None, loader=default_loader, download=False
+    ):
         self.root = os.path.expanduser(root)
         self.transform = transform
         self.loader = default_loader
@@ -415,19 +485,30 @@ class Cub2011(Dataset):
             self._download()
 
         if not self._check_integrity():
-            raise RuntimeError('Dataset not found or corrupted.' +
-                               ' You can use download=True to download it')
+            raise RuntimeError(
+                "Dataset not found or corrupted."
+                + " You can use download=True to download it"
+            )
 
     def _load_metadata(self):
-        images = pd.read_csv(os.path.join(self.root, 'CUB_200_2011', 'images.txt'), sep=' ',
-                             names=['img_id', 'filepath'])
-        image_class_labels = pd.read_csv(os.path.join(self.root, 'CUB_200_2011', 'image_class_labels.txt'),
-                                         sep=' ', names=['img_id', 'target'])
-        train_test_split = pd.read_csv(os.path.join(self.root, 'CUB_200_2011', 'train_test_split.txt'),
-                                       sep=' ', names=['img_id', 'is_training_img'])
+        images = pd.read_csv(
+            os.path.join(self.root, "CUB_200_2011", "images.txt"),
+            sep=" ",
+            names=["img_id", "filepath"],
+        )
+        image_class_labels = pd.read_csv(
+            os.path.join(self.root, "CUB_200_2011", "image_class_labels.txt"),
+            sep=" ",
+            names=["img_id", "target"],
+        )
+        train_test_split = pd.read_csv(
+            os.path.join(self.root, "CUB_200_2011", "train_test_split.txt"),
+            sep=" ",
+            names=["img_id", "is_training_img"],
+        )
 
-        data = images.merge(image_class_labels, on='img_id')
-        self.data = data.merge(train_test_split, on='img_id')
+        data = images.merge(image_class_labels, on="img_id")
+        self.data = data.merge(train_test_split, on="img_id")
 
         if self.train:
             self.data = self.data[self.data.is_training_img == 1]
@@ -451,7 +532,7 @@ class Cub2011(Dataset):
         import tarfile
 
         if self._check_integrity():
-            print('Files already downloaded and verified')
+            print("Files already downloaded and verified")
             return
 
         download_url(self.url, self.root, self.filename, self.tgz_md5)
@@ -471,7 +552,7 @@ class Cub2011(Dataset):
         if self.transform is not None:
             img = self.transform(img)
 
-        return img, target
+        return img, target, idx
 
 
 class StanfordCars(VisionDataset):
@@ -508,7 +589,9 @@ class StanfordCars(VisionDataset):
         try:
             import scipy.io as sio
         except ImportError:
-            raise RuntimeError("Scipy is not found. This dataset needs to have scipy installed: pip install scipy")
+            raise RuntimeError(
+                "Scipy is not found. This dataset needs to have scipy installed: pip install scipy"
+            )
 
         super().__init__(root, transform=transform, target_transform=target_transform)
 
@@ -520,24 +603,33 @@ class StanfordCars(VisionDataset):
             self._annotations_mat_path = devkit / "cars_train_annos.mat"
             self._images_base_path = self._base_folder / "cars_train"
         else:
-            self._annotations_mat_path = self._base_folder / "cars_test_annos_withlabels.mat"
+            self._annotations_mat_path = (
+                self._base_folder / "cars_test_annos_withlabels.mat"
+            )
             self._images_base_path = self._base_folder / "cars_test"
 
         if download:
             self.download()
 
         if not self._check_exists():
-            raise RuntimeError("Dataset not found. You can use download=True to download it")
+            raise RuntimeError(
+                "Dataset not found. You can use download=True to download it"
+            )
 
         self._samples = [
             (
                 str(self._images_base_path / annotation["fname"]),
-                annotation["class"] - 1,  # Original target mapping  starts from 1, hence -1
+                annotation["class"]
+                - 1,  # Original target mapping  starts from 1, hence -1
             )
-            for annotation in sio.loadmat(self._annotations_mat_path, squeeze_me=True)["annotations"]
+            for annotation in sio.loadmat(self._annotations_mat_path, squeeze_me=True)[
+                "annotations"
+            ]
         ]
 
-        self.classes = sio.loadmat(str(devkit / "cars_meta.mat"), squeeze_me=True)["class_names"].tolist()
+        self.classes = sio.loadmat(str(devkit / "cars_meta.mat"), squeeze_me=True)[
+            "class_names"
+        ].tolist()
         self.class_to_idx = {cls: i for i, cls in enumerate(self.classes)}
 
     def __len__(self) -> int:
@@ -553,7 +645,6 @@ class StanfordCars(VisionDataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
         return pil_image, target
-
 
     def download(self) -> None:
         if self._check_exists():
@@ -603,28 +694,40 @@ class Cars(VisionDataset):
             puts it in root directory. If dataset is already downloaded, it is not
             downloaded again.
     """
+
     file_list = {
-        'imgs': ('http://imagenet.stanford.edu/internal/car196/car_ims.tgz', 'car_ims.tgz'),
-        'annos': ('http://imagenet.stanford.edu/internal/car196/cars_annos.mat', 'cars_annos.mat')
+        "imgs": (
+            "http://imagenet.stanford.edu/internal/car196/car_ims.tgz",
+            "car_ims.tgz",
+        ),
+        "annos": (
+            "http://imagenet.stanford.edu/internal/car196/cars_annos.mat",
+            "cars_annos.mat",
+        ),
     }
 
-    def __init__(self, root, train=True, transform=None, target_transform=None, download=False):
-        super(Cars, self).__init__(root,)
+    def __init__(
+        self, root, train=True, transform=None, target_transform=None, download=False
+    ):
+        super(Cars, self).__init__(
+            root,
+        )
 
         self.loader = default_loader
         self.train = train
         self.transform = transform
 
         if self._check_exists():
-            print('Files already downloaded and verified.')
+            print("Files already downloaded and verified.")
         elif download:
             self._download()
         else:
             raise RuntimeError(
-                'Dataset not found. You can use download=True to download it.')
+                "Dataset not found. You can use download=True to download it."
+            )
 
-        loaded_mat = sio.loadmat(os.path.join(self.root, self.file_list['annos'][1]))
-        loaded_mat = loaded_mat['annotations'][0]
+        loaded_mat = sio.loadmat(os.path.join(self.root, self.file_list["annos"][1]))
+        loaded_mat = loaded_mat["annotations"][0]
         self.samples = []
         for item in loaded_mat:
             if self.train != bool(item[-1][0]):
@@ -647,15 +750,16 @@ class Cars(VisionDataset):
         return len(self.samples)
 
     def _check_exists(self):
-        return (os.path.exists(os.path.join(self.root, self.file_list['imgs'][1]))
-                and os.path.exists(os.path.join(self.root, self.file_list['annos'][1])))
+        return os.path.exists(
+            os.path.join(self.root, self.file_list["imgs"][1])
+        ) and os.path.exists(os.path.join(self.root, self.file_list["annos"][1]))
 
     def _download(self):
-        print('Downloading...')
+        print("Downloading...")
         for url, filename in self.file_list.values():
             download_url(url, root=self.root, filename=filename)
-        print('Extracting...')
-        archive = os.path.join(self.root, self.file_list['imgs'][1])
+        print("Extracting...")
+        archive = os.path.join(self.root, self.file_list["imgs"][1])
         extract_archive(archive)
 
 
@@ -674,10 +778,19 @@ class Dogs(Dataset):
             puts it in root directory. If the tar files are already downloaded, they are not
             downloaded again.
     """
-    folder = 'dog'
-    download_url_prefix = 'http://vision.stanford.edu/aditya86/ImageNetDogs'
 
-    def __init__(self, root, train=True, cropped=False, transform=None, target_transform=None, download=False):
+    folder = "dog"
+    download_url_prefix = "http://vision.stanford.edu/aditya86/ImageNetDogs"
+
+    def __init__(
+        self,
+        root,
+        train=True,
+        cropped=False,
+        transform=None,
+        target_transform=None,
+        download=False,
+    ):
         # self.root = join(os.path.expanduser(root), self.folder)
         self.root = root
         self.train = train
@@ -690,142 +803,155 @@ class Dogs(Dataset):
 
         split = self.load_split()
 
-        self.images_folder = os.path.join(self.root, 'Images')
-        self.annotations_folder = os.path.join(self.root, 'Annotation')
+        self.images_folder = os.path.join(self.root, "Images")
+        self.annotations_folder = os.path.join(self.root, "Annotation")
         self._breeds = list_dir(self.images_folder)
 
         if self.cropped:
-            self._breed_annotations = [[(annotation, box, idx)
-                                        for box in self.get_boxes(os.path.join(self.annotations_folder, annotation))]
-                                        for annotation, idx in split]
+            self._breed_annotations = [
+                [
+                    (annotation, box, idx)
+                    for box in self.get_boxes(
+                        os.path.join(self.annotations_folder, annotation)
+                    )
+                ]
+                for annotation, idx in split
+            ]
             self._flat_breed_annotations = sum(self._breed_annotations, [])
 
-            self._flat_breed_images = [(annotation+'.jpg', idx) for annotation, box, idx in self._flat_breed_annotations]
+            self._flat_breed_images = [
+                (annotation + ".jpg", idx)
+                for annotation, box, idx in self._flat_breed_annotations
+            ]
         else:
-            self._breed_images = [(annotation+'.jpg', idx) for annotation, idx in split]
+            self._breed_images = [
+                (annotation + ".jpg", idx) for annotation, idx in split
+            ]
 
             self._flat_breed_images = self._breed_images
 
-        self.classes = ["Chihuaha",
-                        "Japanese Spaniel",
-                        "Maltese Dog",
-                        "Pekinese",
-                        "Shih-Tzu",
-                        "Blenheim Spaniel",
-                        "Papillon",
-                        "Toy Terrier",
-                        "Rhodesian Ridgeback",
-                        "Afghan Hound",
-                        "Basset Hound",
-                        "Beagle",
-                        "Bloodhound",
-                        "Bluetick",
-                        "Black-and-tan Coonhound",
-                        "Walker Hound",
-                        "English Foxhound",
-                        "Redbone",
-                        "Borzoi",
-                        "Irish Wolfhound",
-                        "Italian Greyhound",
-                        "Whippet",
-                        "Ibizian Hound",
-                        "Norwegian Elkhound",
-                        "Otterhound",
-                        "Saluki",
-                        "Scottish Deerhound",
-                        "Weimaraner",
-                        "Staffordshire Bullterrier",
-                        "American Staffordshire Terrier",
-                        "Bedlington Terrier",
-                        "Border Terrier",
-                        "Kerry Blue Terrier",
-                        "Irish Terrier",
-                        "Norfolk Terrier",
-                        "Norwich Terrier",
-                        "Yorkshire Terrier",
-                        "Wirehaired Fox Terrier",
-                        "Lakeland Terrier",
-                        "Sealyham Terrier",
-                        "Airedale",
-                        "Cairn",
-                        "Australian Terrier",
-                        "Dandi Dinmont",
-                        "Boston Bull",
-                        "Miniature Schnauzer",
-                        "Giant Schnauzer",
-                        "Standard Schnauzer",
-                        "Scotch Terrier",
-                        "Tibetan Terrier",
-                        "Silky Terrier",
-                        "Soft-coated Wheaten Terrier",
-                        "West Highland White Terrier",
-                        "Lhasa",
-                        "Flat-coated Retriever",
-                        "Curly-coater Retriever",
-                        "Golden Retriever",
-                        "Labrador Retriever",
-                        "Chesapeake Bay Retriever",
-                        "German Short-haired Pointer",
-                        "Vizsla",
-                        "English Setter",
-                        "Irish Setter",
-                        "Gordon Setter",
-                        "Brittany",
-                        "Clumber",
-                        "English Springer Spaniel",
-                        "Welsh Springer Spaniel",
-                        "Cocker Spaniel",
-                        "Sussex Spaniel",
-                        "Irish Water Spaniel",
-                        "Kuvasz",
-                        "Schipperke",
-                        "Groenendael",
-                        "Malinois",
-                        "Briard",
-                        "Kelpie",
-                        "Komondor",
-                        "Old English Sheepdog",
-                        "Shetland Sheepdog",
-                        "Collie",
-                        "Border Collie",
-                        "Bouvier des Flandres",
-                        "Rottweiler",
-                        "German Shepard",
-                        "Doberman",
-                        "Miniature Pinscher",
-                        "Greater Swiss Mountain Dog",
-                        "Bernese Mountain Dog",
-                        "Appenzeller",
-                        "EntleBucher",
-                        "Boxer",
-                        "Bull Mastiff",
-                        "Tibetan Mastiff",
-                        "French Bulldog",
-                        "Great Dane",
-                        "Saint Bernard",
-                        "Eskimo Dog",
-                        "Malamute",
-                        "Siberian Husky",
-                        "Affenpinscher",
-                        "Basenji",
-                        "Pug",
-                        "Leonberg",
-                        "Newfoundland",
-                        "Great Pyrenees",
-                        "Samoyed",
-                        "Pomeranian",
-                        "Chow",
-                        "Keeshond",
-                        "Brabancon Griffon",
-                        "Pembroke",
-                        "Cardigan",
-                        "Toy Poodle",
-                        "Miniature Poodle",
-                        "Standard Poodle",
-                        "Mexican Hairless",
-                        "Dingo",
-                        "Dhole",
-                        "African Hunting Dog"]
+        self.classes = [
+            "Chihuaha",
+            "Japanese Spaniel",
+            "Maltese Dog",
+            "Pekinese",
+            "Shih-Tzu",
+            "Blenheim Spaniel",
+            "Papillon",
+            "Toy Terrier",
+            "Rhodesian Ridgeback",
+            "Afghan Hound",
+            "Basset Hound",
+            "Beagle",
+            "Bloodhound",
+            "Bluetick",
+            "Black-and-tan Coonhound",
+            "Walker Hound",
+            "English Foxhound",
+            "Redbone",
+            "Borzoi",
+            "Irish Wolfhound",
+            "Italian Greyhound",
+            "Whippet",
+            "Ibizian Hound",
+            "Norwegian Elkhound",
+            "Otterhound",
+            "Saluki",
+            "Scottish Deerhound",
+            "Weimaraner",
+            "Staffordshire Bullterrier",
+            "American Staffordshire Terrier",
+            "Bedlington Terrier",
+            "Border Terrier",
+            "Kerry Blue Terrier",
+            "Irish Terrier",
+            "Norfolk Terrier",
+            "Norwich Terrier",
+            "Yorkshire Terrier",
+            "Wirehaired Fox Terrier",
+            "Lakeland Terrier",
+            "Sealyham Terrier",
+            "Airedale",
+            "Cairn",
+            "Australian Terrier",
+            "Dandi Dinmont",
+            "Boston Bull",
+            "Miniature Schnauzer",
+            "Giant Schnauzer",
+            "Standard Schnauzer",
+            "Scotch Terrier",
+            "Tibetan Terrier",
+            "Silky Terrier",
+            "Soft-coated Wheaten Terrier",
+            "West Highland White Terrier",
+            "Lhasa",
+            "Flat-coated Retriever",
+            "Curly-coater Retriever",
+            "Golden Retriever",
+            "Labrador Retriever",
+            "Chesapeake Bay Retriever",
+            "German Short-haired Pointer",
+            "Vizsla",
+            "English Setter",
+            "Irish Setter",
+            "Gordon Setter",
+            "Brittany",
+            "Clumber",
+            "English Springer Spaniel",
+            "Welsh Springer Spaniel",
+            "Cocker Spaniel",
+            "Sussex Spaniel",
+            "Irish Water Spaniel",
+            "Kuvasz",
+            "Schipperke",
+            "Groenendael",
+            "Malinois",
+            "Briard",
+            "Kelpie",
+            "Komondor",
+            "Old English Sheepdog",
+            "Shetland Sheepdog",
+            "Collie",
+            "Border Collie",
+            "Bouvier des Flandres",
+            "Rottweiler",
+            "German Shepard",
+            "Doberman",
+            "Miniature Pinscher",
+            "Greater Swiss Mountain Dog",
+            "Bernese Mountain Dog",
+            "Appenzeller",
+            "EntleBucher",
+            "Boxer",
+            "Bull Mastiff",
+            "Tibetan Mastiff",
+            "French Bulldog",
+            "Great Dane",
+            "Saint Bernard",
+            "Eskimo Dog",
+            "Malamute",
+            "Siberian Husky",
+            "Affenpinscher",
+            "Basenji",
+            "Pug",
+            "Leonberg",
+            "Newfoundland",
+            "Great Pyrenees",
+            "Samoyed",
+            "Pomeranian",
+            "Chow",
+            "Keeshond",
+            "Brabancon Griffon",
+            "Pembroke",
+            "Cardigan",
+            "Toy Poodle",
+            "Miniature Poodle",
+            "Standard Poodle",
+            "Mexican Hairless",
+            "Dingo",
+            "Dhole",
+            "African Hunting Dog",
+        ]
 
     def __len__(self):
         return len(self._flat_breed_images)
@@ -839,7 +965,7 @@ class Dogs(Dataset):
         """
         image_name, target_class = self._flat_breed_images[index]
         image_path = os.path.join(self.images_folder, image_name)
-        image = Image.open(image_path).convert('RGB')
+        image = Image.open(image_path).convert("RGB")
 
         if self.cropped:
             image = image.crop(self._flat_breed_annotations[index][1])
@@ -855,42 +981,63 @@ class Dogs(Dataset):
     def download(self):
         import tarfile
 
-        if os.path.exists(os.path.join(self.root, 'Images')) and os.path.exists(os.path.join(self.root, 'Annotation')):
-            if len(os.listdir(os.path.join(self.root, 'Images'))) == len(os.listdir(os.path.join(self.root, 'Annotation'))) == 120:
-                print('Files already downloaded and verified')
+        if os.path.exists(os.path.join(self.root, "Images")) and os.path.exists(
+            os.path.join(self.root, "Annotation")
+        ):
+            if (
+                len(os.listdir(os.path.join(self.root, "Images")))
+                == len(os.listdir(os.path.join(self.root, "Annotation")))
+                == 120
+            ):
+                print("Files already downloaded and verified")
                 return
 
-        for filename in ['images', 'annotation', 'lists']:
-            tar_filename = filename + '.tar'
-            url = self.download_url_prefix + '/' + tar_filename
+        for filename in ["images", "annotation", "lists"]:
+            tar_filename = filename + ".tar"
+            url = self.download_url_prefix + "/" + tar_filename
             download_url(url, self.root, tar_filename, None)
-            print('Extracting downloaded file: ' + os.path.join(self.root, tar_filename))
-            with tarfile.open(os.path.join(self.root, tar_filename), 'r') as tar_file:
+            print(
+                "Extracting downloaded file: " + os.path.join(self.root, tar_filename)
+            )
+            with tarfile.open(os.path.join(self.root, tar_filename), "r") as tar_file:
                 tar_file.extractall(self.root)
             os.remove(os.path.join(self.root, tar_filename))
 
     @staticmethod
     def get_boxes(path):
         import xml.etree.ElementTree
+
         e = xml.etree.ElementTree.parse(path).getroot()
         boxes = []
-        for objs in e.iter('object'):
-            boxes.append([int(objs.find('bndbox').find('xmin').text),
-                          int(objs.find('bndbox').find('ymin').text),
-                          int(objs.find('bndbox').find('xmax').text),
-                          int(objs.find('bndbox').find('ymax').text)])
+        for objs in e.iter("object"):
+            boxes.append(
+                [
+                    int(objs.find("bndbox").find("xmin").text),
+                    int(objs.find("bndbox").find("ymin").text),
+                    int(objs.find("bndbox").find("xmax").text),
+                    int(objs.find("bndbox").find("ymax").text),
+                ]
+            )
         return boxes
 
     def load_split(self):
         if self.train:
-            split = scipy.io.loadmat(os.path.join(self.root, 'train_list.mat'))['annotation_list']
-            labels = scipy.io.loadmat(os.path.join(self.root, 'train_list.mat'))['labels']
+            split = scipy.io.loadmat(os.path.join(self.root, "train_list.mat"))[
+                "annotation_list"
+            ]
+            labels = scipy.io.loadmat(os.path.join(self.root, "train_list.mat"))[
+                "labels"
+            ]
         else:
-            split = scipy.io.loadmat(os.path.join(self.root, 'test_list.mat'))['annotation_list']
-            labels = scipy.io.loadmat(os.path.join(self.root, 'test_list.mat'))['labels']
+            split = scipy.io.loadmat(os.path.join(self.root, "test_list.mat"))[
+                "annotation_list"
+            ]
+            labels = scipy.io.loadmat(os.path.join(self.root, "test_list.mat"))[
+                "labels"
+            ]
 
         split = [item[0][0] for item in split]
-        labels = [item[0]-1 for item in labels]
+        labels = [item[0] - 1 for item in labels]
         return list(zip(split, labels))
 
     def stats(self):
@@ -902,7 +1049,14 @@ class Dogs(Dataset):
             else:
                 counts[target_class] += 1
 
-        print("%d samples spanning %d classes (avg %f per class)"%(len(self._flat_breed_images), len(counts.keys()), float(len(self._flat_breed_images))/float(len(counts.keys()))))
+        print(
+            "%d samples spanning %d classes (avg %f per class)"
+            % (
+                len(self._flat_breed_images),
+                len(counts.keys()),
+                float(len(self._flat_breed_images)) / float(len(counts.keys())),
+            )
+        )
 
         return counts
 
@@ -922,28 +1076,48 @@ class Aircraft(VisionDataset):
             puts it in root directory. If dataset is already downloaded, it is not
             downloaded again.
     """
-    url = 'http://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/archives/fgvc-aircraft-2013b.tar.gz'
-    class_types = ('variant', 'family', 'manufacturer')
-    splits = ('train', 'val', 'trainval', 'test')
-    img_folder = os.path.join('fgvc-aircraft-2013b', 'data', 'images')
 
-    def __init__(self, root, train=True, class_type='variant', transform=None,
-                 target_transform=None, download=False):
-        super(Aircraft, self).__init__(root, transform=transform, target_transform=target_transform)
-        split = 'trainval' if train else 'test'
+    url = "http://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/archives/fgvc-aircraft-2013b.tar.gz"
+    class_types = ("variant", "family", "manufacturer")
+    splits = ("train", "val", "trainval", "test")
+    img_folder = os.path.join("fgvc-aircraft-2013b", "data", "images")
+
+    def __init__(
+        self,
+        root,
+        train=True,
+        class_type="variant",
+        transform=None,
+        target_transform=None,
+        download=False,
+    ):
+        super(Aircraft, self).__init__(
+            root, transform=transform, target_transform=target_transform
+        )
+        split = "trainval" if train else "test"
         if split not in self.splits:
-            raise ValueError('Split "{}" not found. Valid splits are: {}'.format(
-                split, ', '.join(self.splits),
-            ))
+            raise ValueError(
+                'Split "{}" not found. Valid splits are: {}'.format(
+                    split,
+                    ", ".join(self.splits),
+                )
+            )
         if class_type not in self.class_types:
-            raise ValueError('Class type "{}" not found. Valid class types are: {}'.format(
-                class_type, ', '.join(self.class_types),
-            ))
+            raise ValueError(
+                'Class type "{}" not found. Valid class types are: {}'.format(
+                    class_type,
+                    ", ".join(self.class_types),
+                )
+            )
 
         self.class_type = class_type
         self.split = split
-        self.classes_file = os.path.join(self.root, 'fgvc-aircraft-2013b', 'data',
-                                         'images_%s_%s.txt' % (self.class_type, self.split))
+        self.classes_file = os.path.join(
+            self.root,
+            "fgvc-aircraft-2013b",
+            "data",
+            "images_%s_%s.txt" % (self.class_type, self.split),
+        )
 
         if download:
             self.download()
@@ -970,31 +1144,32 @@ class Aircraft(VisionDataset):
         return len(self.samples)
 
     def _check_exists(self):
-        return os.path.exists(os.path.join(self.root, self.img_folder)) and \
-               os.path.exists(self.classes_file)
+        return os.path.exists(
+            os.path.join(self.root, self.img_folder)
+        ) and os.path.exists(self.classes_file)
 
     def download(self):
         if self._check_exists():
             return
 
         # prepare to download data to PARENT_DIR/fgvc-aircraft-2013.tar.gz
-        print('Downloading %s...' % self.url)
-        tar_name = self.url.rpartition('/')[-1]
+        print("Downloading %s..." % self.url)
+        tar_name = self.url.rpartition("/")[-1]
         download_url(self.url, root=self.root, filename=tar_name)
         tar_path = os.path.join(self.root, tar_name)
-        print('Extracting %s...' % tar_path)
+        print("Extracting %s..." % tar_path)
         extract_archive(tar_path)
-        print('Done!')
+        print("Done!")
 
     def find_classes(self):
         # read classes file, separating out image IDs and class names
         image_ids = []
         targets = []
-        with open(self.classes_file, 'r') as f:
+        with open(self.classes_file, "r") as f:
             for line in f:
-                split_line = line.split(' ')
+                split_line = line.split(" ")
                 image_ids.append(split_line[0])
-                targets.append(' '.join(split_line[1:]))
+                targets.append(" ".join(split_line[1:]))
 
         # index class names
         classes = np.unique(targets)
@@ -1004,14 +1179,15 @@ class Aircraft(VisionDataset):
         return image_ids, targets, classes, class_to_idx
 
     def make_dataset(self, image_ids, targets):
-        assert (len(image_ids) == len(targets))
+        assert len(image_ids) == len(targets)
         images = []
         for i in range(len(image_ids)):
-            item = (os.path.join(self.root, self.img_folder,
-                                 '%s.jpg' % image_ids[i]), targets[i])
+            item = (
+                os.path.join(self.root, self.img_folder, "%s.jpg" % image_ids[i]),
+                targets[i],
+            )
             images.append(item)
         return images
-
 
 
 def move_images(image_dir, image_labels):
@@ -1026,27 +1202,27 @@ def move_images(image_dir, image_labels):
             Each category is different species of flower.
     """
 
-    if image_dir[-1] != '/':
-        image_dir = image_dir + '/'
+    if image_dir[-1] != "/":
+        image_dir = image_dir + "/"
 
     # Make training, validation and testing directories
-    os.mkdir('/nfs/xmq/data/dataset/flowers102/flowers')
-    train_dir = '/nfs/xmq/data/dataset/flowers102/flowers/train/'
-    test_dir = '/nfs/xmq/data/dataset/flowers102/flowers/test/'
-    valid_dir = '/nfs/xmq/data/dataset/flowers102/flowers/valid/'
+    os.mkdir("/nfs/xmq/data/dataset/flowers102/flowers")
+    train_dir = "/nfs/xmq/data/dataset/flowers102/flowers/train/"
+    test_dir = "/nfs/xmq/data/dataset/flowers102/flowers/test/"
+    valid_dir = "/nfs/xmq/data/dataset/flowers102/flowers/valid/"
     os.mkdir(train_dir)
     os.mkdir(test_dir)
     os.mkdir(valid_dir)
 
     # Make subdirectories
     for label in range(1, 103):
-        os.mkdir(train_dir + '/' + str(label))
-        os.mkdir(test_dir + '/' + str(label))
-        os.mkdir(valid_dir + '/' + str(label))
+        os.mkdir(train_dir + "/" + str(label))
+        os.mkdir(test_dir + "/" + str(label))
+        os.mkdir(valid_dir + "/" + str(label))
 
     # Load labels (image index to category)
     labels = loadmat(image_labels, squeeze_me=True)
-    labels_np = np.array(labels['labels'])
+    labels_np = np.array(labels["labels"])
 
     # Move images to new subdirectories
     last_l = 0
@@ -1060,116 +1236,62 @@ def move_images(image_dir, image_labels):
         label = str(l)
         i_str = str(i + 1)
         if len(i_str) == 1:
-            src_start = image_dir + 'image_0000'
-            dst_start = '/image_0000'
+            src_start = image_dir + "image_0000"
+            dst_start = "/image_0000"
         elif len(i_str) == 2:
-            src_start = image_dir + 'image_000'
-            dst_start = '/image_000'
+            src_start = image_dir + "image_000"
+            dst_start = "/image_000"
         elif len(i_str) == 3:
-            src_start = image_dir + 'image_00'
-            dst_start = '/image_00'
+            src_start = image_dir + "image_00"
+            dst_start = "/image_00"
         else:
-            src_start = image_dir + 'image_0'
-            dst_start = '/image_0'
+            src_start = image_dir + "image_0"
+            dst_start = "/image_0"
 
-        src = src_start + i_str + '.jpg'
+        src = src_start + i_str + ".jpg"
         if count % 6 == 0:
-            dst = valid_dir + label + dst_start + i_str + '.jpg'
+            dst = valid_dir + label + dst_start + i_str + ".jpg"
         elif count % 7 == 0:
-            dst = test_dir + label + dst_start + i_str + '.jpg'
+            dst = test_dir + label + dst_start + i_str + ".jpg"
         else:
-            dst = train_dir + label + dst_start + i_str + '.jpg'
+            dst = train_dir + label + dst_start + i_str + ".jpg"
 
         os.rename(src, dst)
     os.rmdir(image_dir)
 
 
-
-if __name__ == '__main__':
-    '''
-    dataset = CUB(root='./CUB_200_2011')
-
-    for data in dataset:
-        print(data[0].size(),data[1])
-
-    '''
-
-    # import argparse
-    # import helper
-
-    # parser = argparse.ArgumentParser(
-    #     description='Move image downloads to newly created flowers directory,'
-    #                 ' delete download directory.')
-    # parser.add_argument('image_dir', action="store", default='/nfs/xmq/data/dataset/flowers102',
-    #                     help='image directory path')
-    # parser.add_argument('labels_file', action="store",
-    #                     default='/nfs/xmq/data/dataset/flowers102/imagelabels.mat',
-    #                     help='labels file path')
-    # args = parser.parse_args()
-
-    print('Moving files..')
-    image_dir = '/nfs/xmq/data/dataset/flowers102/jpg'
-    labels_file = '/nfs/xmq/data/dataset/flowers102/imagelabels.mat'
-    move_images(image_dir, labels_file)
-    print('flowers directory created')
-
-    exit()
-
-
-    # data_root = '/nfs/xmq/data/dataset/stanford_cars'
-    data_root = '/datasets/fine-grain_dataset/StanfordDogs'
-    trainset = Dogs(root=data_root,
-                            train=True,
-                            cropped=False,
-                            download=False
-                            )
-    testset = Dogs(root=data_root,
-                            train=False,
-                            cropped=False,
-                            download=False
-                            )
-    print(len(trainset), len(testset))
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=2, shuffle=True, num_workers=0,
-                                              drop_last=True)
-
-    testloader = torch.utils.data.DataLoader(testset, batch_size=2, shuffle=True, num_workers=0,
-                                              drop_last=True)
-    print(len(trainloader), len(testloader))
-    exit()
-
-
-    train_dataset = Cars('/nfs/xmq/data/dataset/stanford-car', train=True, download=False)
-    test_dataset = Cars('/nfs/xmq/data/dataset/stanford-car', train=False, download=False)
-    print(len(train_dataset), len(test_dataset))
-    trainloader = torch.utils.data.DataLoader(train_dataset, batch_size=2, shuffle=True, num_workers=0,
-                                              drop_last=True)
-
-    testloader = torch.utils.data.DataLoader(test_dataset, batch_size=2, shuffle=True, num_workers=0,
-                                              drop_last=True)
-
-    dataset_train, nb_classes = build_dataset(is_train=True)
-    dataset_val, _ = build_dataset(is_train=False)
-
-
+if __name__ == "__main__":
     # Read the data set in the way of DataLoader in pytorch
-    transform_train = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.RandomCrop(224, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225]),
-    ])
+    transform_train = transforms.Compose(
+        [
+            transforms.Resize((224, 224)),
+            transforms.RandomCrop(224, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ]
+    )
 
-    datapath = '/nfs/xmq/data/dataset'
-    train_dataset = Cub2011(root=datapath, train=True, transform=transform_train,)
+    datapath = "/mnt/data/ProtoPFormer/datasets/"
+    train_dataset = Cub2011(
+        root=datapath,
+        train=True,
+        transform=transform_train,
+    )
     print(len(train_dataset))
-    trainloader = torch.utils.data.DataLoader(train_dataset, batch_size=2, shuffle=True, num_workers=0,
-                                              drop_last=True)
+    trainloader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=2, shuffle=True, num_workers=0, drop_last=True
+    )
     print(len(trainloader))
 
-    test_dataset = Cub2011(root=datapath, train=False, transform=transform_train,)
+    test_dataset = Cub2011(
+        root=datapath,
+        train=False,
+        transform=transform_train,
+    )
     print(len(test_dataset))
-    testloader = torch.utils.data.DataLoader(test_dataset, batch_size=2, shuffle=False, num_workers=0,
-                                              drop_last=False)    
-    
+    testloader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=2, shuffle=False, num_workers=0, drop_last=False
+    )
+
     print(len(testloader))

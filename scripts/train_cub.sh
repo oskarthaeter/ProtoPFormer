@@ -1,8 +1,10 @@
 #/!bin/bash
 
 export PYTHONPATH=./:$PYTHONPATH
+export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+export CUDA_VISIBLE_DEVICES="1"
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+# export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 # model=deit_tiny_patch16_224
 # model=deit_small_patch16_224
@@ -29,7 +31,7 @@ sched=cosine
 decay_epochs=10
 decay_rate=0.1
 weight_decay=0.05
-epochs=200
+epochs=20
 output_dir=output_cosine/
 input_size=224
 
@@ -61,7 +63,8 @@ for data_set in CUB2011U;
 do
     prototype_num=2000
     data_path=datasets
-    python -m torch.distributed.launch --nproc_per_node=$num_gpus --master_port=$use_port --use_env main.py \
+    # python -m torch.distributed.launch --nproc_per_node=$num_gpus --master_port=$use_port --use_env main.py \
+    python main.py \
         --base_architecture=$model \
         --data_set=$data_set \
         --data_path=$data_path \

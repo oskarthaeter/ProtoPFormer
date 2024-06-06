@@ -1,6 +1,8 @@
 #/!bin/bash
 
 export PYTHONPATH=./:$PYTHONPATH
+export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+export CUDA_VISIBLE_DEVICES="1"
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
 # export CUDA_VISIBLE_DEVICES=4,5,6,7
 
@@ -62,7 +64,8 @@ do
     prototype_num=1960
     data_path=datasets
     
-    python -m torch.distributed.launch --nproc_per_node=$num_gpus --master_port=$use_port --use_env main.py \
+    # python -m torch.distributed.launch --nproc_per_node=$num_gpus --master_port=$use_port --use_env main.py \
+    python main.py \
         --base_architecture=$model \
         --data_set=$data_set \
         --data_path=$data_path \
