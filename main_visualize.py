@@ -1,7 +1,7 @@
 import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 import torch
 import random
@@ -118,7 +118,6 @@ def get_closest_patches(ppnet, prototype_vectors, data_loader, patch_size=16):
                 img_batch, ppnet.reserve_layer_nums
             )
             img_tokens = img_tokens.permute(0, 2, 3, 1)  # [B, H, W, C]
-
             distances = torch.cdist(
                 img_tokens.view(-1, img_tokens.shape[-1]),
                 prototype_vectors.view(prototype_vectors.shape[0], -1),
@@ -214,17 +213,21 @@ def visualize_prototypes(closest_patches_info, dataset, save_path, patch_size=16
         plt.close()
 
 
-def visualize_prototype(
+def synthesize_prototype(
     ppnet,
     prototype_idx,
-    img_size=224,
+    patch,
     num_steps=500,
     learning_rate=0.1,
     save_path="prototype_visualizations",
 ):
     os.makedirs(save_path, exist_ok=True)
-    # Create a random noise image
-    input_img = torch.randn(1, 3, img_size, img_size, requires_grad=True, device="cuda")
+
+    input_img = torch.zeros(1, 3, 224, 224).cuda()
+    input_img[:, :, 0:16, 0:16] = patch
+    input_img.requires_grad_(True)
+
+    # Only allow gradients for the patch region
 
     # Define optimizer
     optimizer = torch.optim.Adam([input_img], lr=learning_rate)
@@ -248,21 +251,23 @@ def visualize_prototype(
             )
 
             # Minimize the distance
-            loss = distances.mean()
-            loss.backward()
+            loss = distances.min()
+            loss.backward(retain_graph=True)
             optimizer.step()
 
             # Clip the image values to be in the valid range [0, 1]
             with torch.no_grad():
                 input_img.clamp_(0, 1)
+                # set everything but the patch to 0
+                input_img[:, :, 16:, :] = 0
+                input_img[:, :, :, 16:] = 0
 
             # Print progress
             pbar.set_postfix_str(f"Loss: {loss.item():.4f}")
 
     # Save the optimized image
-    patch_img = torchvision.transforms.v2.functional.to_pil_image(input_img[0])
-    patch_img.save(f"{save_path}/prototype_{prototype_idx}.png")
-    return input_img
+    image = torchvision.transforms.v2.functional.to_pil_image(input_img[0].cpu())
+    image.save(f"{save_path}/prototype_{prototype_idx}.png")
 
 
 def save_fig(X, Y, Z, save_path):
@@ -455,10 +460,665 @@ def get_args():
     return args
 
 
+def visualize_main(args, ppnet, use_train_imgs, view_loader, loader):
+    token_reserve_num = args.reserve_token_nums[-1]
+
+    for category_id in args.vis_classes:
+
+        print("process category {}...".format(category_id))
+        data_dir = os.path.join(args.output_dir, args.data_set)
+        addstr = "train" if use_train_imgs else "test"
+        model_dir = os.path.join(
+            data_dir,
+            args.base_architecture + "-{}".format(args.finetune) + "-{}".format(addstr),
+        )
+        visual_dir = os.path.join(model_dir, args.visual_type)
+        category_dir = os.path.join(visual_dir, "category_{}".format(category_id))
+        os.makedirs(category_dir, exist_ok=True)
+
+        view_imgs, view_labels = [], None
+        for i, (x, y, _) in enumerate(view_loader):
+            # img = x[0].permute(1, 2, 0) * 255
+            # img = img.numpy().astype(np.int32)
+            # cv2.imwrite('output_view2/test.jpg', img)
+
+            imgs = x.permute(0, 2, 3, 1) * 255
+            imgs = imgs.numpy().astype(np.uint8)
+            for k in range(len(imgs)):
+                imgs[k] = cv2.cvtColor(imgs[k], cv2.COLOR_BGR2RGB)
+
+            view_imgs.append(imgs)
+            if view_labels is None:
+                view_labels = y.numpy()
+            else:
+                view_labels = np.concatenate([view_labels, y.numpy()], axis=0)
+            if len(np.nonzero(view_labels == category_id)[0]) > 20:
+                break
+        view_imgs = np.concatenate(view_imgs, axis=0)
+
+        labels = view_labels
+
+        # model inference to get activation maps on last layer
+        labels = None
+        pred_labels = None
+        all_token_attn, min_distances, all_cls_attn = [], [], []
+        for i, (x, y, _) in enumerate(loader):
+            x = x.cuda()
+            y = y.cuda()
+            logits, auxi_items = ppnet.forward(x)
+            token_attn, distances = auxi_items[0], auxi_items[1]
+            _, pred = logits.topk(k=1, dim=1)
+
+            all_token_attn.append(token_attn.detach().cpu().numpy())
+            min_distances.append(distances.detach().cpu().numpy())
+            # labels.append(y.numpy())
+            if labels is None:
+                labels = y.cpu().numpy()
+                pred_labels = pred.cpu().numpy()
+            else:
+                labels = np.concatenate([labels, y.cpu().numpy()], axis=0)
+                pred_labels = np.concatenate([pred_labels, pred.cpu().numpy()], axis=0)
+            if len(np.nonzero(labels == category_id)[0]) > 20:
+                break
+        all_token_attn = np.concatenate(all_token_attn, axis=0)
+        distances = np.concatenate(min_distances, axis=0)
+        proto_acts = np.log((distances + 1) / (distances + ppnet.epsilon))
+        total_proto_acts = proto_acts
+
+        proto_acts = np.amax(proto_acts, (2, 3))
+        last_layer = (
+            ppnet.last_layer.weight.detach().cpu().numpy().transpose(1, 0)
+        )  # (2000, 200)
+        logits = np.dot(proto_acts, last_layer)
+
+        # get attn
+        select_idxes = np.nonzero(labels == category_id)[0]
+        cur_token_attn = all_token_attn[select_idxes]
+        cur_labels = pred_labels[select_idxes]
+        total_proto_acts = total_proto_acts[select_idxes]
+        logits = logits[select_idxes]
+        is_pred_right = cur_labels == category_id
+        sample_num, num_prototypes = (
+            total_proto_acts.shape[0],
+            total_proto_acts.shape[1],
+        )
+
+        # reserve_num = [x[1] for x in reserve_layer_nums]
+        fea_size = int(cur_token_attn.shape[-1] ** (1 / 2))
+        token_attn = cur_token_attn.reshape(cur_token_attn.shape[0], -1)
+        token_attn = torch.from_numpy(token_attn)
+
+        # 9 * 9 -> 14 * 14 fill into
+        total_proto_acts = torch.from_numpy(total_proto_acts)
+        reserve_token_indices = torch.topk(token_attn, k=token_reserve_num, dim=-1)[1]
+        reserve_token_indices = reserve_token_indices.sort(dim=-1)[0]
+        reserve_token_indices = reserve_token_indices[:, None, :].repeat(
+            1, num_prototypes, 1
+        )  # (B, 2000, 81)
+        replace_proto_acts = torch.zeros(sample_num, num_prototypes, 196)
+        replace_proto_acts.scatter_(
+            2, reserve_token_indices, total_proto_acts.flatten(start_dim=2)
+        )  # (B, 2000, 196)
+        replace_proto_acts = replace_proto_acts.reshape(
+            sample_num, num_prototypes, 14, 14
+        ).numpy()
+
+        view_imgs = view_imgs[select_idxes]
+        for proto_idx in range(10):
+            # select view_imgs, proto_acts, labels
+            print("process proto {}...".format(proto_idx))
+            cur_proto_acts = replace_proto_acts[
+                :, category_id * proto_per_category + proto_idx
+            ]
+            heatmaps, patch_idxes, proto_acts, all_coors = [], [], [], []
+
+            for k in range(len(cur_proto_acts)):
+                proto_act = cur_proto_acts[k]
+
+                new_proto_act = proto_act
+                new_proto_act = new_proto_act - np.amin(new_proto_act)
+                new_proto_act = new_proto_act / np.amax(new_proto_act)
+                new_proto_act = cv2.applyColorMap(
+                    np.uint8(255 * new_proto_act), cv2.COLORMAP_JET
+                )
+                proto_acts.append(new_proto_act)
+
+                # save gaussian activation map
+                if args.use_gauss:
+                    gaussian_proto_act = np.copy(proto_act)
+                    fea_size = gaussian_proto_act.shape[-1]
+                    act_mean, act_cov = get_gaussian_params(
+                        gaussian_proto_act
+                    )  # (2,), (2, 2)
+                    X = np.linspace(0, fea_size - 1, 150)
+                    Y = np.linspace(0, fea_size - 1, 150)
+                    X, Y = np.meshgrid(X, Y)
+                    pos = np.empty(X.shape + (2,))
+                    pos[:, :, 0] = X
+                    pos[:, :, 1] = Y
+                    Z = multivariate_gaussian(pos, act_mean, act_cov)
+                    img_dir = os.path.join(category_dir, "img_{}".format(k))
+                    if os.path.exists(img_dir) is False:
+                        os.makedirs(img_dir, exist_ok=True)
+                    save_fig(
+                        X,
+                        Y,
+                        Z,
+                        os.path.join(img_dir, "gaussian_{}.jpg".format(proto_idx)),
+                    )
+
+                upsampled_act = cv2.resize(
+                    proto_act,
+                    (args.input_size, args.input_size),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+                upsampled_act = upsampled_act - np.amin(upsampled_act)
+                upsampled_act = upsampled_act / np.amax(upsampled_act)
+
+                # get the top 5% bounding box
+                coor = find_high_activation_crop(upsampled_act)
+
+                heatmap = cv2.applyColorMap(
+                    np.uint8(255 * upsampled_act), cv2.COLORMAP_JET
+                )
+                patch_idx = [t[0] for t in np.where(proto_act == proto_act.max())]
+                heatmaps.append(heatmap)
+                patch_idxes.append(patch_idx)
+                all_coors.append(coor)
+            heatmaps = np.stack(heatmaps, axis=0)
+            proto_acts = np.stack(proto_acts, axis=0)
+            acti_imgs = (view_imgs * 0.7 + heatmaps * 0.3).astype(np.uint8)
+
+            # view the masks
+            if args.visual_type == "slim_gaussian":
+                # draw the bounding boxes
+                for k in range(len(view_imgs)):
+                    img_dir = os.path.join(category_dir, "img_{}".format(k))
+                    if os.path.exists(img_dir) is False:
+                        os.makedirs(img_dir, exist_ok=True)
+                    bnd_img = view_imgs[k]
+                    coor = all_coors[k]
+                    start_point, end_point = (coor[2], coor[0]), (
+                        coor[3],
+                        coor[1],
+                    )  # (x coor, y coor)
+
+                    # part_img = bnd_img[coor[0]:coor[1], coor[2]:coor[3]]
+                    # cv2.imwrite(os.path.join(img_dir, 'proto{}_reserve{}_part.jpg'.format(proto_idx, token_reserve_num)), part_img)
+                    bnd_img = cv2.rectangle(
+                        bnd_img.astype(np.uint8).copy(),
+                        start_point,
+                        end_point,
+                        (0, 255, 255),
+                        thickness=2,
+                    )
+                    cv2.imwrite(
+                        os.path.join(
+                            img_dir,
+                            "proto{}_reserve{}_bnd.jpg".format(
+                                proto_idx, token_reserve_num
+                            ),
+                        ),
+                        bnd_img,
+                    )
+
+                num_patches = token_attn.shape[-1]
+                replace_color = [0, 0, 0]
+                discard_token_indices = torch.topk(
+                    token_attn, k=num_patches - token_reserve_num, dim=-1, largest=False
+                )[1]
+                final_imgs, discard_imgs = [], []
+                for k in range(len(acti_imgs)):
+                    cur_discard_indices = discard_token_indices[k].numpy()
+
+                    discard_img = get_discard_img(
+                        view_imgs[k],
+                        cur_discard_indices,
+                        fea_size,
+                        patch_size,
+                        replace_color,
+                    )
+                    acti_img = acti_imgs[k]
+                    final_imgs.append(acti_img)
+                    discard_imgs.append(discard_img)
+
+                for k in range(len(final_imgs)):
+                    img_dir = os.path.join(category_dir, "img_{}".format(k))
+                    if os.path.exists(img_dir) is False:
+                        os.makedirs(img_dir, exist_ok=True)
+                    cv2.imwrite(
+                        os.path.join(
+                            img_dir,
+                            "proto{}_reserve{}.jpg".format(
+                                proto_idx, token_reserve_num
+                            ),
+                        ),
+                        final_imgs[k],
+                    )
+
+                    discard_path = os.path.join(
+                        img_dir,
+                        "catch_img_reserve{}_mask.jpg".format(token_reserve_num),
+                    )
+                    if os.path.exists(discard_path) is False:
+                        cv2.imwrite(discard_path, discard_imgs[k])
+
+
+def visualize_most_important_for_label(
+    args, ppnet, use_train_imgs, view_loader, loader
+):
+    token_reserve_num = args.reserve_token_nums[-1]
+
+    for category_id in args.vis_classes:
+        print("process category {}...".format(category_id))
+        data_dir = os.path.join(args.output_dir, args.data_set)
+        addstr = "train" if use_train_imgs else "test"
+        model_dir = os.path.join(
+            data_dir,
+            args.base_architecture + "-{}".format(args.finetune) + "-{}".format(addstr),
+        )
+        visual_dir = os.path.join(model_dir, args.visual_type)
+        category_dir = os.path.join(visual_dir, "category_{}".format(category_id))
+        os.makedirs(category_dir, exist_ok=True)
+
+        view_imgs, view_labels = [], None
+        for i, (x, y, _) in enumerate(view_loader):
+            imgs = x.permute(0, 2, 3, 1) * 255
+            imgs = imgs.numpy().astype(np.uint8)
+            for k in range(len(imgs)):
+                imgs[k] = cv2.cvtColor(imgs[k], cv2.COLOR_BGR2RGB)
+
+            view_imgs.append(imgs)
+            if view_labels is None:
+                view_labels = y.numpy()
+            else:
+                view_labels = np.concatenate([view_labels, y.numpy()], axis=0)
+            if len(np.nonzero(view_labels == category_id)[0]) > 20:
+                break
+        view_imgs = np.concatenate(view_imgs, axis=0)
+
+        labels = view_labels
+
+        labels = None
+        pred_labels = None
+        all_token_attn, min_distances, all_cls_attn = [], [], []
+        for i, (x, y, _) in enumerate(loader):
+            x = x.cuda()
+            y = y.cuda()
+            logits, auxi_items = ppnet.forward(x)
+            token_attn, distances = auxi_items[0], auxi_items[1]
+            _, pred = logits.topk(k=1, dim=1)
+
+            all_token_attn.append(token_attn.detach().cpu().numpy())
+            min_distances.append(distances.detach().cpu().numpy())
+            if labels is None:
+                labels = y.cpu().numpy()
+                pred_labels = pred.cpu().numpy()
+            else:
+                labels = np.concatenate([labels, y.cpu().numpy()], axis=0)
+                pred_labels = np.concatenate([pred_labels, pred.cpu().numpy()], axis=0)
+            if len(np.nonzero(labels == category_id)[0]) > 20:
+                break
+        all_token_attn = np.concatenate(all_token_attn, axis=0)
+        distances = np.concatenate(min_distances, axis=0)
+        proto_acts = np.log((distances + 1) / (distances + ppnet.epsilon))
+        total_proto_acts = proto_acts
+
+        proto_acts = np.amax(proto_acts, (2, 3))
+        last_layer = ppnet.last_layer.weight.detach().cpu().numpy().transpose(1, 0)
+        logits = np.dot(proto_acts, last_layer)
+
+        select_idxes = np.nonzero(labels == category_id)[0]
+        cur_token_attn = all_token_attn[select_idxes]
+        cur_labels = pred_labels[select_idxes]
+        total_proto_acts = total_proto_acts[select_idxes]
+        logits = logits[select_idxes]
+        is_pred_right = cur_labels == category_id
+        sample_num, num_prototypes = (
+            total_proto_acts.shape[0],
+            total_proto_acts.shape[1],
+        )
+
+        fea_size = int(cur_token_attn.shape[-1] ** (1 / 2))
+        token_attn = cur_token_attn.reshape(cur_token_attn.shape[0], -1)
+        token_attn = torch.from_numpy(token_attn)
+
+        total_proto_acts = torch.from_numpy(total_proto_acts)
+        reserve_token_indices = torch.topk(token_attn, k=token_reserve_num, dim=-1)[1]
+        reserve_token_indices = reserve_token_indices.sort(dim=-1)[0]
+        reserve_token_indices = reserve_token_indices[:, None, :].repeat(
+            1, num_prototypes, 1
+        )
+        replace_proto_acts = torch.zeros(sample_num, num_prototypes, 196)
+        replace_proto_acts.scatter_(
+            2, reserve_token_indices, total_proto_acts.flatten(start_dim=2)
+        )
+        replace_proto_acts = replace_proto_acts.reshape(
+            sample_num, num_prototypes, 14, 14
+        ).numpy()
+
+        view_imgs = view_imgs[select_idxes]
+
+        for i in range(sample_num):
+            cur_proto_acts = replace_proto_acts[
+                i,
+                category_id
+                * proto_per_category : (category_id + 1)
+                * proto_per_category,
+            ]
+            proto_acts_max = cur_proto_acts.max(axis=(1, 2))
+            proto_idx_max = proto_acts_max.argmax()
+
+            print("process proto {} for image {}...".format(proto_idx_max, i))
+            cur_proto_act = cur_proto_acts[proto_idx_max]
+            heatmaps, proto_acts, all_coors = [], [], []
+
+            proto_act = cur_proto_act
+            new_proto_act = proto_act - np.amin(proto_act)
+            new_proto_act = new_proto_act / np.amax(new_proto_act)
+            new_proto_act = cv2.applyColorMap(
+                np.uint8(255 * new_proto_act), cv2.COLORMAP_JET
+            )
+            proto_acts.append(new_proto_act)
+
+            upsampled_act = cv2.resize(
+                proto_act,
+                (args.input_size, args.input_size),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            upsampled_act = upsampled_act - np.amin(upsampled_act)
+            upsampled_act = upsampled_act / np.amax(upsampled_act)
+
+            coor = find_high_activation_crop(upsampled_act)
+
+            heatmap = cv2.applyColorMap(np.uint8(255 * upsampled_act), cv2.COLORMAP_JET)
+            heatmaps.append(heatmap)
+            all_coors.append(coor)
+
+            heatmaps = np.stack(heatmaps, axis=0)
+            proto_acts = np.stack(proto_acts, axis=0)
+            acti_imgs = (view_imgs[i] * 0.7 + heatmaps[0] * 0.3).astype(np.uint8)
+
+            if args.visual_type == "slim_gaussian":
+                img_dir = os.path.join(category_dir, "img_{}".format(i))
+                if os.path.exists(img_dir) is False:
+                    os.makedirs(img_dir, exist_ok=True)
+                bnd_img = view_imgs[i]
+                coor = all_coors[0]
+                start_point, end_point = (coor[2], coor[0]), (coor[3], coor[1])
+
+                bnd_img = cv2.rectangle(
+                    bnd_img.astype(np.uint8).copy(),
+                    start_point,
+                    end_point,
+                    (0, 255, 255),
+                    thickness=2,
+                )
+                cv2.imwrite(
+                    os.path.join(
+                        img_dir,
+                        "proto{}_reserve{}_bnd.jpg".format(
+                            proto_idx_max, token_reserve_num
+                        ),
+                    ),
+                    bnd_img,
+                )
+
+                num_patches = token_attn.shape[-1]
+                replace_color = [0, 0, 0]
+                discard_token_indices = torch.topk(
+                    token_attn, k=num_patches - token_reserve_num, dim=-1, largest=False
+                )[1]
+                final_imgs, discard_imgs = [], []
+                cur_discard_indices = discard_token_indices[i].numpy()
+
+                discard_img = get_discard_img(
+                    view_imgs[i],
+                    cur_discard_indices,
+                    fea_size,
+                    patch_size,
+                    replace_color,
+                )
+                acti_img = acti_imgs
+                final_imgs.append(acti_img)
+                discard_imgs.append(discard_img)
+
+                for k in range(len(final_imgs)):
+                    img_dir = os.path.join(category_dir, "img_{}".format(i))
+                    if os.path.exists(img_dir) is False:
+                        os.makedirs(img_dir, exist_ok=True)
+                    cv2.imwrite(
+                        os.path.join(
+                            img_dir,
+                            "proto{}_reserve{}.jpg".format(
+                                proto_idx_max, token_reserve_num
+                            ),
+                        ),
+                        final_imgs[k],
+                    )
+
+                    discard_path = os.path.join(
+                        img_dir,
+                        "catch_img_reserve{}_mask.jpg".format(token_reserve_num),
+                    )
+                    if os.path.exists(discard_path) is False:
+                        cv2.imwrite(discard_path, discard_imgs[k])
+
+
+def visualize_most_important_for_prediction(
+    args, ppnet, use_train_imgs, view_loader, loader
+):
+    select_colors = np.array(
+        [[47, 243, 224], [250, 38, 160], [248, 210, 16], [245, 23, 32]]
+    )
+    token_reserve_num = args.reserve_token_nums[-1]
+    proto_per_category = 10  # Assuming 10 prototypes per class
+
+    for category_id in args.vis_classes:
+        print("process category {}...".format(category_id))
+        data_dir = os.path.join(args.output_dir, args.data_set)
+        addstr = "train" if use_train_imgs else "test"
+        model_dir = os.path.join(
+            data_dir,
+            args.base_architecture + "-{}".format(args.finetune) + "-{}".format(addstr),
+        )
+        visual_dir = os.path.join(model_dir, args.visual_type)
+        category_dir = os.path.join(visual_dir, "category_{}".format(category_id))
+        os.makedirs(category_dir, exist_ok=True)
+
+        view_imgs, view_labels = [], None
+        for i, (x, y, _) in enumerate(view_loader):
+            imgs = x.permute(0, 2, 3, 1) * 255
+            imgs = imgs.numpy().astype(np.uint8)
+            for k in range(len(imgs)):
+                imgs[k] = cv2.cvtColor(imgs[k], cv2.COLOR_BGR2RGB)
+
+            view_imgs.append(imgs)
+            if view_labels is None:
+                view_labels = y.numpy()
+            else:
+                view_labels = np.concatenate([view_labels, y.numpy()], axis=0)
+            if len(np.nonzero(view_labels == category_id)[0]) > 20:
+                break
+        view_imgs = np.concatenate(view_imgs, axis=0)
+
+        labels = view_labels
+
+        labels = None
+        pred_labels = None
+        all_token_attn, min_distances, all_cls_attn = [], [], []
+        for i, (x, y, _) in enumerate(loader):
+            x = x.cuda()
+            y = y.cuda()
+            logits, auxi_items = ppnet.forward(x)
+            token_attn, distances = auxi_items[0], auxi_items[1]
+            _, pred = logits.topk(k=1, dim=1)
+
+            all_token_attn.append(token_attn.detach().cpu().numpy())
+            min_distances.append(distances.detach().cpu().numpy())
+            if labels is None:
+                labels = y.cpu().numpy()
+                pred_labels = pred.cpu().numpy()
+            else:
+                labels = np.concatenate([labels, y.cpu().numpy()], axis=0)
+                pred_labels = np.concatenate([pred_labels, pred.cpu().numpy()], axis=0)
+            if len(np.nonzero(labels == category_id)[0]) > 20:
+                break
+        all_token_attn = np.concatenate(all_token_attn, axis=0)
+        distances = np.concatenate(min_distances, axis=0)
+        proto_acts = np.log((distances + 1) / (distances + ppnet.epsilon))
+        total_proto_acts = proto_acts
+
+        proto_acts = np.amax(proto_acts, (2, 3))
+        last_layer = ppnet.last_layer.weight.detach().cpu().numpy().transpose(1, 0)
+        logits = np.dot(proto_acts, last_layer)
+
+        select_idxes = np.nonzero(
+            (labels == category_id) & (pred_labels == category_id)
+        )[0]
+        if len(select_idxes) == 0:
+            print(f"No correct predictions for category {category_id}")
+            continue
+
+        cur_token_attn = all_token_attn[select_idxes]
+        cur_labels = pred_labels[select_idxes]
+        total_proto_acts = total_proto_acts[select_idxes]
+        logits = logits[select_idxes]
+        is_pred_right = cur_labels == category_id
+        sample_num, num_prototypes = (
+            total_proto_acts.shape[0],
+            total_proto_acts.shape[1],
+        )
+
+        fea_size = int(cur_token_attn.shape[-1] ** (1 / 2))
+        token_attn = cur_token_attn.reshape(cur_token_attn.shape[0], -1)
+        token_attn = torch.from_numpy(token_attn)
+
+        total_proto_acts = torch.from_numpy(total_proto_acts)
+        reserve_token_indices = torch.topk(token_attn, k=token_reserve_num, dim=-1)[1]
+        reserve_token_indices = reserve_token_indices.sort(dim=-1)[0]
+        reserve_token_indices = reserve_token_indices[:, None, :].repeat(
+            1, num_prototypes, 1
+        )
+        replace_proto_acts = torch.zeros(sample_num, num_prototypes, 196)
+        replace_proto_acts.scatter_(
+            2, reserve_token_indices, total_proto_acts.flatten(start_dim=2)
+        )
+        replace_proto_acts = replace_proto_acts.reshape(
+            sample_num, num_prototypes, 14, 14
+        ).numpy()
+
+        view_imgs = view_imgs[select_idxes]
+
+        for i in range(sample_num):
+            cur_proto_acts = replace_proto_acts[
+                i,
+                category_id
+                * proto_per_category : (category_id + 1)
+                * proto_per_category,
+            ]
+            proto_acts_max = cur_proto_acts.max(axis=(1, 2))
+            proto_idx_max = proto_acts_max.argmax()
+
+            print("process proto {} for image {}...".format(proto_idx_max, i))
+            cur_proto_act = cur_proto_acts[proto_idx_max]
+            heatmaps, proto_acts, all_coors = [], [], []
+
+            proto_act = cur_proto_act
+            new_proto_act = proto_act - np.amin(proto_act)
+            new_proto_act = new_proto_act / np.amax(new_proto_act)
+            new_proto_act = cv2.applyColorMap(
+                np.uint8(255 * new_proto_act), cv2.COLORMAP_JET
+            )
+            proto_acts.append(new_proto_act)
+
+            upsampled_act = cv2.resize(
+                proto_act,
+                (args.input_size, args.input_size),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            upsampled_act = upsampled_act - np.amin(upsampled_act)
+            upsampled_act = upsampled_act / np.amax(upsampled_act)
+
+            coor = find_high_activation_crop(upsampled_act)
+
+            heatmap = cv2.applyColorMap(np.uint8(255 * upsampled_act), cv2.COLORMAP_JET)
+            heatmaps.append(heatmap)
+            all_coors.append(coor)
+
+            heatmaps = np.stack(heatmaps, axis=0)
+            proto_acts = np.stack(proto_acts, axis=0)
+            acti_imgs = (view_imgs[i] * 0.7 + heatmaps[0] * 0.3).astype(np.uint8)
+
+            if args.visual_type == "slim_gaussian":
+                img_dir = os.path.join(category_dir, "img_{}".format(i))
+                if os.path.exists(img_dir) is False:
+                    os.makedirs(img_dir, exist_ok=True)
+                bnd_img = view_imgs[i]
+                coor = all_coors[0]
+                start_point, end_point = (coor[2], coor[0]), (coor[3], coor[1])
+
+                bnd_img = cv2.rectangle(
+                    bnd_img.astype(np.uint8).copy(),
+                    start_point,
+                    end_point,
+                    (0, 255, 255),
+                    thickness=2,
+                )
+                cv2.imwrite(
+                    os.path.join(
+                        img_dir,
+                        "proto{}_reserve{}_bnd.jpg".format(
+                            proto_idx_max, token_reserve_num
+                        ),
+                    ),
+                    bnd_img,
+                )
+
+                num_patches = token_attn.shape[-1]
+                replace_color = [0, 0, 0]
+                discard_token_indices = torch.topk(
+                    token_attn, k=num_patches - token_reserve_num, dim=-1, largest=False
+                )[1]
+                final_imgs, discard_imgs = [], []
+                cur_discard_indices = discard_token_indices[i].numpy()
+
+                discard_img = get_discard_img(
+                    view_imgs[i],
+                    cur_discard_indices,
+                    fea_size,
+                    patch_size,
+                    replace_color,
+                )
+                acti_img = acti_imgs
+                final_imgs.append(acti_img)
+                discard_imgs.append(discard_img)
+
+                for k in range(len(final_imgs)):
+                    img_dir = os.path.join(category_dir, "img_{}".format(i))
+                    if os.path.exists(img_dir) is False:
+                        os.makedirs(img_dir, exist_ok=True)
+                    cv2.imwrite(
+                        os.path.join(
+                            img_dir,
+                            "proto{}_reserve{}.jpg".format(
+                                proto_idx_max, token_reserve_num
+                            ),
+                        ),
+                        final_imgs[k],
+                    )
+
+                    discard_path = os.path.join(
+                        img_dir,
+                        "catch_img_reserve{}_mask.jpg".format(token_reserve_num),
+                    )
+                    if os.path.exists(discard_path) is False:
+                        cv2.imwrite(discard_path, discard_imgs[k])
+
+
 args = get_args()
 set_seed(1028)
 
-# os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 device = torch.device(args.device)
 
 # Dataset
@@ -536,6 +1196,7 @@ else:
     ppnet.load_state_dict(load_model, strict=False)
 ppnet = ppnet.cuda()
 ppnet.eval()
+# ppnet = torch.compile(ppnet)
 
 patch_size = 16
 proto_per_category = 10
@@ -543,255 +1204,17 @@ use_train_imgs = False
 view_loader = test_view_loader if use_train_imgs is False else train_view_loader
 loader = test_loader if use_train_imgs is False else train_view_loader
 
-###
+# ###
 # closest_patches_info = get_closest_patches(
 #     ppnet, ppnet.prototype_vectors, train_loader, patch_size
 # )
 # visualize_prototypes(
 #     closest_patches_info, dataset_train, "prototype_visualizations", patch_size
 # )
-##
-for i in range(1):
-    print(f"Visualizing prototype {i}...")
-    visualize_prototype(
-        ppnet,
-        i,
-        num_steps=100000,
-        learning_rate=0.01,
-        save_path="prototype_visualizations/synthetic",
-    )
-###
+# ###
 
-# select_colors = np.array(
-#     [[47, 243, 224], [250, 38, 160], [248, 210, 16], [245, 23, 32]]
+visualize_main(args, ppnet, use_train_imgs, view_loader, loader)
+# visualize_most_important_for_label(args, ppnet, use_train_imgs, view_loader, loader)
+# visualize_most_important_for_prediction(
+#     args, ppnet, use_train_imgs, view_loader, loader
 # )
-# token_reserve_num = args.reserve_token_nums[-1]
-
-# for category_id in args.vis_classes:
-
-#     print("process category {}...".format(category_id))
-#     data_dir = os.path.join(args.output_dir, args.data_set)
-#     addstr = "train" if use_train_imgs else "test"
-#     model_dir = os.path.join(
-#         data_dir,
-#         args.base_architecture + "-{}".format(args.finetune) + "-{}".format(addstr),
-#     )
-#     visual_dir = os.path.join(model_dir, args.visual_type)
-#     category_dir = os.path.join(visual_dir, "category_{}".format(category_id))
-#     os.makedirs(category_dir, exist_ok=True)
-
-#     view_imgs, view_labels = [], None
-#     for i, (x, y, _) in enumerate(view_loader):
-#         # img = x[0].permute(1, 2, 0) * 255
-#         # img = img.numpy().astype(np.int32)
-#         # cv2.imwrite('output_view2/test.jpg', img)
-
-#         imgs = x.permute(0, 2, 3, 1) * 255
-#         imgs = imgs.numpy().astype(np.uint8)
-#         for k in range(len(imgs)):
-#             imgs[k] = cv2.cvtColor(imgs[k], cv2.COLOR_BGR2RGB)
-
-#         view_imgs.append(imgs)
-#         if view_labels is None:
-#             view_labels = y.numpy()
-#         else:
-#             view_labels = np.concatenate([view_labels, y.numpy()], axis=0)
-#         if len(np.nonzero(view_labels == category_id)[0]) > 20:
-#             break
-#     view_imgs = np.concatenate(view_imgs, axis=0)
-
-#     labels = view_labels
-
-#     # model inference to get activation maps on last layer
-#     labels = None
-#     pred_labels = None
-#     all_token_attn, min_distances, all_cls_attn = [], [], []
-#     for i, (x, y, _) in enumerate(loader):
-#         x = x.cuda()
-#         y = y.cuda()
-#         logits, auxi_items = ppnet.forward(x)
-#         token_attn, distances = auxi_items[0], auxi_items[1]
-#         _, pred = logits.topk(k=1, dim=1)
-
-#         all_token_attn.append(token_attn.detach().cpu().numpy())
-#         min_distances.append(distances.detach().cpu().numpy())
-#         # labels.append(y.numpy())
-#         if labels is None:
-#             labels = y.cpu().numpy()
-#             pred_labels = pred.cpu().numpy()
-#         else:
-#             labels = np.concatenate([labels, y.cpu().numpy()], axis=0)
-#             pred_labels = np.concatenate([pred_labels, pred.cpu().numpy()], axis=0)
-#         if len(np.nonzero(labels == category_id)[0]) > 20:
-#             break
-#     all_token_attn = np.concatenate(all_token_attn, axis=0)
-#     distances = np.concatenate(min_distances, axis=0)
-#     proto_acts = np.log((distances + 1) / (distances + ppnet.epsilon))
-#     total_proto_acts = proto_acts
-
-#     proto_acts = np.amax(proto_acts, (2, 3))
-#     last_layer = (
-#         ppnet.last_layer.weight.detach().cpu().numpy().transpose(1, 0)
-#     )  # (2000, 200)
-#     logits = np.dot(proto_acts, last_layer)
-
-#     # get attn
-#     select_idxes = np.nonzero(labels == category_id)[0]
-#     cur_token_attn = all_token_attn[select_idxes]
-#     cur_labels = pred_labels[select_idxes]
-#     total_proto_acts = total_proto_acts[select_idxes]
-#     logits = logits[select_idxes]
-#     is_pred_right = cur_labels == category_id
-#     sample_num, num_prototypes = total_proto_acts.shape[0], total_proto_acts.shape[1]
-
-#     # reserve_num = [x[1] for x in reserve_layer_nums]
-#     fea_size = int(cur_token_attn.shape[-1] ** (1 / 2))
-#     token_attn = cur_token_attn.reshape(cur_token_attn.shape[0], -1)
-#     token_attn = torch.from_numpy(token_attn)
-
-#     # 9 * 9 -> 14 * 14 fill into
-#     total_proto_acts = torch.from_numpy(total_proto_acts)
-#     reserve_token_indices = torch.topk(token_attn, k=token_reserve_num, dim=-1)[1]
-#     reserve_token_indices = reserve_token_indices.sort(dim=-1)[0]
-#     reserve_token_indices = reserve_token_indices[:, None, :].repeat(
-#         1, num_prototypes, 1
-#     )  # (B, 2000, 81)
-#     replace_proto_acts = torch.zeros(sample_num, num_prototypes, 196)
-#     replace_proto_acts.scatter_(
-#         2, reserve_token_indices, total_proto_acts.flatten(start_dim=2)
-#     )  # (B, 2000, 196)
-#     replace_proto_acts = replace_proto_acts.reshape(
-#         sample_num, num_prototypes, 14, 14
-#     ).numpy()
-
-#     view_imgs = view_imgs[select_idxes]
-#     for proto_idx in range(10):
-#         # for proto_idx in range(1):
-#         # select view_imgs, proto_acts, labels
-#         print("process proto {}...".format(proto_idx))
-#         cur_proto_acts = replace_proto_acts[
-#             :, category_id * proto_per_category + proto_idx
-#         ]
-#         heatmaps, patch_idxes, proto_acts, all_coors = [], [], [], []
-#         for k in range(len(cur_proto_acts)):
-#             proto_act = cur_proto_acts[k]
-
-#             new_proto_act = proto_act
-#             new_proto_act = new_proto_act - np.amin(new_proto_act)
-#             new_proto_act = new_proto_act / np.amax(new_proto_act)
-#             new_proto_act = cv2.applyColorMap(
-#                 np.uint8(255 * new_proto_act), cv2.COLORMAP_JET
-#             )
-#             proto_acts.append(new_proto_act)
-
-#             # save gaussian activation map
-#             if args.use_gauss:
-#                 gaussian_proto_act = np.copy(proto_act)
-#                 fea_size = gaussian_proto_act.shape[-1]
-#                 act_mean, act_cov = get_gaussian_params(
-#                     gaussian_proto_act
-#                 )  # (2,), (2, 2)
-#                 X = np.linspace(0, fea_size - 1, 150)
-#                 Y = np.linspace(0, fea_size - 1, 150)
-#                 X, Y = np.meshgrid(X, Y)
-#                 pos = np.empty(X.shape + (2,))
-#                 pos[:, :, 0] = X
-#                 pos[:, :, 1] = Y
-#                 Z = multivariate_gaussian(pos, act_mean, act_cov)
-#                 img_dir = os.path.join(category_dir, "img_{}".format(k))
-#                 if os.path.exists(img_dir) is False:
-#                     os.makedirs(img_dir, exist_ok=True)
-#                 save_fig(
-#                     X, Y, Z, os.path.join(img_dir, "gaussian_{}.jpg".format(proto_idx))
-#                 )
-
-#             upsampled_act = cv2.resize(
-#                 proto_act,
-#                 (args.input_size, args.input_size),
-#                 interpolation=cv2.INTER_CUBIC,
-#             )
-#             upsampled_act = upsampled_act - np.amin(upsampled_act)
-#             upsampled_act = upsampled_act / np.amax(upsampled_act)
-
-#             # get the top 5% bounding box
-#             coor = find_high_activation_crop(upsampled_act)
-
-#             heatmap = cv2.applyColorMap(np.uint8(255 * upsampled_act), cv2.COLORMAP_JET)
-#             patch_idx = [t[0] for t in np.where(proto_act == proto_act.max())]
-#             heatmaps.append(heatmap)
-#             patch_idxes.append(patch_idx)
-#             all_coors.append(coor)
-#         heatmaps = np.stack(heatmaps, axis=0)
-#         proto_acts = np.stack(proto_acts, axis=0)
-#         acti_imgs = (view_imgs * 0.7 + heatmaps * 0.3).astype(np.uint8)
-
-#         # view the masks
-#         if args.visual_type == "slim_gaussian":
-#             # draw the bounding boxes
-#             for k in range(len(view_imgs)):
-#                 img_dir = os.path.join(category_dir, "img_{}".format(k))
-#                 if os.path.exists(img_dir) is False:
-#                     os.makedirs(img_dir, exist_ok=True)
-#                 bnd_img = view_imgs[k]
-#                 coor = all_coors[k]
-#                 start_point, end_point = (coor[2], coor[0]), (
-#                     coor[3],
-#                     coor[1],
-#                 )  # (x coor, y coor)
-
-#                 # part_img = bnd_img[coor[0]:coor[1], coor[2]:coor[3]]
-#                 # cv2.imwrite(os.path.join(img_dir, 'proto{}_reserve{}_part.jpg'.format(proto_idx, token_reserve_num)), part_img)
-#                 bnd_img = cv2.rectangle(
-#                     bnd_img.astype(np.uint8).copy(),
-#                     start_point,
-#                     end_point,
-#                     (0, 255, 255),
-#                     thickness=2,
-#                 )
-#                 cv2.imwrite(
-#                     os.path.join(
-#                         img_dir,
-#                         "proto{}_reserve{}_bnd.jpg".format(
-#                             proto_idx, token_reserve_num
-#                         ),
-#                     ),
-#                     bnd_img,
-#                 )
-
-#             num_patches = token_attn.shape[-1]
-#             replace_color = [0, 0, 0]
-#             discard_token_indices = torch.topk(
-#                 token_attn, k=num_patches - token_reserve_num, dim=-1, largest=False
-#             )[1]
-#             final_imgs, discard_imgs = [], []
-#             for k in range(len(acti_imgs)):
-#                 cur_discard_indices = discard_token_indices[k].numpy()
-
-#                 discard_img = get_discard_img(
-#                     view_imgs[k],
-#                     cur_discard_indices,
-#                     fea_size,
-#                     patch_size,
-#                     replace_color,
-#                 )
-#                 acti_img = acti_imgs[k]
-#                 final_imgs.append(acti_img)
-#                 discard_imgs.append(discard_img)
-
-#             for k in range(len(final_imgs)):
-#                 img_dir = os.path.join(category_dir, "img_{}".format(k))
-#                 if os.path.exists(img_dir) is False:
-#                     os.makedirs(img_dir, exist_ok=True)
-#                 cv2.imwrite(
-#                     os.path.join(
-#                         img_dir,
-#                         "proto{}_reserve{}.jpg".format(proto_idx, token_reserve_num),
-#                     ),
-#                     final_imgs[k],
-#                 )
-
-#                 discard_path = os.path.join(
-#                     img_dir, "catch_img_reserve{}_mask.jpg".format(token_reserve_num)
-#                 )
-#                 if os.path.exists(discard_path) is False:
-#                     cv2.imwrite(discard_path, discard_imgs[k])
